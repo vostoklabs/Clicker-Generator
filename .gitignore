@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+.vite/
+*.log
+
+# local backups / archives (e.g. project zip snapshots)
+*.zip

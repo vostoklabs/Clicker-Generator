@@ -1,0 +1,25 @@
+{
+  "name": "clicker-generator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based image-to-clicker 3D model generator (3MF export, GitHub Pages).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "d3-contour": "^4.0.2",
+    "fflate": "^0.8.3",
+    "manifold-3d": "^3.0.1",
+    "three": "^0.171.0"
+  },
+  "devDependencies": {
+    "@types/d3-contour": "^3.0.6",
+    "@types/three": "^0.171.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
