@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { ClickerPart, MeshData, RGB, ViewMode } from '../types';
+import type { ClickerPart, EditMode, MeshData, RGB, ViewMode } from '../types';
 
 export type SectionAxis = 'x' | 'y' | 'z';
 
@@ -14,14 +14,20 @@ export interface Viewer {
   showSwitch(on: boolean): void;
   renderToPng(): Promise<Blob | null>;
   setTheme(theme: string): void;
-  /** Register a callback fired when the user clicks a colored part of the model. */
-  onPartPick(cb: (index: number, clientX: number, clientY: number) => void): void;
+  /** Register a callback fired when the user clicks a colored part of the model, or null if clicking empty space. */
+  onPartPick(cb: (index: number | null, clientX: number, clientY: number, shiftKey: boolean) => void): void;
   /** Live-recolor a single part's material (no rebuild — geometry is unchanged). */
   setPartColor(index: number, rgb: RGB): void;
   /** Mark a part as the active selection (highlight), or null to clear. */
   highlightPart(index: number | null): void;
+  /** Mark multiple parts as active selection. */
+  highlightParts(indices: number[]): void;
   /** Clear hover + selection highlights. */
   clearHighlight(): void;
+  /** Switch viewport edit mode (color / extrude / edges). */
+  setEditMode(mode: EditMode): void;
+  /** Register extrude drag callback — called with part indices and new height level. */
+  setComponentHeights(heights: Record<string, number>, stepHeight: number): void;
   dispose(): void;
 }
 
@@ -145,11 +151,14 @@ export function createViewer(container: HTMLElement): Viewer {
   const pointer = new THREE.Vector2();
   const HILITE = new THREE.Color(0x3b82f6);
   let hoveredIndex: number | null = null;
-  let selectedIndex: number | null = null;
-  let pickCb: ((index: number, clientX: number, clientY: number) => void) | null = null;
+  let selectedIndices: number[] = [];
+  let pickCb: ((index: number | null, clientX: number, clientY: number, shiftKey: boolean) => void) | null = null;
   let downX = 0;
   let downY = 0;
   let downT = 0;
+
+  // ---- Edit mode state ----
+  let editMode: EditMode = 'color';
 
   let outlineMesh: THREE.LineSegments | null = null;
   const outlineMaterial = new THREE.LineBasicMaterial({ color: 0x3b82f6, depthTest: false });
@@ -191,7 +200,7 @@ export function createViewer(container: HTMLElement): Viewer {
     materials.length = 0;
     partMeshes.length = 0;
     hoveredIndex = null;
-    selectedIndex = null;
+    selectedIndices = [];
 
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
@@ -322,33 +331,46 @@ export function createViewer(container: HTMLElement): Viewer {
   // Paint hover/selection glow via emissive (keeps each part's true base color).
   function applyHighlight() {
     if (outlineMesh) {
-      if (outlineMesh.parent) outlineMesh.parent.remove(outlineMesh);
+      outlineMesh.removeFromParent();
       outlineMesh.geometry.dispose();
       outlineMesh = null;
     }
-
-    for (let i = 0; i < materials.length; i++) {
+    for (let i = 0; i < partMeshes.length; i++) {
+      const isSelected = selectedIndices.includes(i);
+      const isHovered = hoveredIndex === i;
       const m = materials[i] as THREE.MeshStandardMaterial;
-      if (!m || !m.emissive) continue;
-      if (i === selectedIndex) {
-        m.emissive.copy(HILITE);
-        m.emissiveIntensity = 0.4;
-      } else if (i === hoveredIndex) {
-        m.emissive.copy(HILITE);
-        m.emissiveIntensity = 0.2;
-      } else {
-        m.emissive.setRGB(0, 0, 0);
-        m.emissiveIntensity = 1;
+      if (m) {
+        if (isSelected || isHovered) {
+          m.emissive.copy(HILITE);
+          m.emissiveIntensity = isHovered ? 0.4 : 0.2;
+        } else {
+          m.emissiveIntensity = 0;
+        }
       }
     }
 
-    const activeIdx = selectedIndex !== null ? selectedIndex : hoveredIndex;
-    if (activeIdx !== null && partMeshes[activeIdx]) {
-      const mesh = partMeshes[activeIdx];
-      const edges = new THREE.EdgesGeometry(mesh.geometry, 15); // only sharp edges > 15 deg
-      outlineMesh = new THREE.LineSegments(edges, outlineMaterial);
-      outlineMesh.renderOrder = 999;
-      mesh.parent?.add(outlineMesh);
+    if (selectedIndices.length > 0) {
+      const outlineGroup = new THREE.Group();
+      for (const idx of selectedIndices) {
+        const mesh = partMeshes[idx];
+        if (mesh) {
+          const edges = new THREE.EdgesGeometry(mesh.geometry, 15);
+          const subOutline = new THREE.LineSegments(edges, outlineMaterial);
+          subOutline.position.copy(mesh.position);
+          subOutline.quaternion.copy(mesh.quaternion);
+          subOutline.scale.copy(mesh.scale);
+          outlineGroup.add(subOutline);
+        }
+      }
+      outlineMesh = outlineGroup as any;
+      outlineMesh!.renderOrder = 999;
+      partMeshes[selectedIndices[0]].parent?.add(outlineMesh!);
+    } else if (hoveredIndex !== null && partMeshes[hoveredIndex]) {
+      const mesh = partMeshes[hoveredIndex];
+      const edges = new THREE.EdgesGeometry(mesh.geometry, 15);
+      outlineMesh = new THREE.LineSegments(edges, outlineMaterial) as any;
+      outlineMesh!.renderOrder = 999;
+      mesh.parent?.add(outlineMesh!);
     }
   }
 
@@ -368,6 +390,7 @@ export function createViewer(container: HTMLElement): Viewer {
 
   const onPointerMove = (e: PointerEvent) => {
     if (e.buttons !== 0) return; // mid orbit/pan — don't fight the controls
+
     const idx = pickIndexAt(e.clientX, e.clientY);
     renderer.domElement.style.cursor = idx === null ? '' : 'pointer';
     if (idx !== hoveredIndex) {
@@ -391,17 +414,43 @@ export function createViewer(container: HTMLElement): Viewer {
     if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) return;
     if (performance.now() - downT > 500) return;
     const idx = pickIndexAt(e.clientX, e.clientY);
-    if (idx === null) return;
-    selectedIndex = idx;
-    applyHighlight();
-    pickCb?.(idx, e.clientX, e.clientY);
+    
+    if (idx === null) {
+      if (editMode === 'extrude' || editMode === 'edges') {
+        // Click on empty space deselects
+        selectedIndices = [];
+        applyHighlight();
+        pickCb?.(null, e.clientX, e.clientY, e.shiftKey);
+      }
+      return;
+    }
+
+    if (editMode === 'extrude' || editMode === 'edges') {
+      if (e.shiftKey) {
+        if (selectedIndices.includes(idx)) {
+          selectedIndices = selectedIndices.filter(i => i !== idx);
+        } else {
+          selectedIndices.push(idx);
+        }
+      } else {
+        selectedIndices = [idx];
+      }
+      applyHighlight();
+      
+      pickCb?.(idx, e.clientX, e.clientY, e.shiftKey);
+    } else {
+      // Color mode
+      selectedIndices = [idx];
+      applyHighlight();
+      pickCb?.(idx, e.clientX, e.clientY, e.shiftKey);
+    }
   };
   renderer.domElement.addEventListener('pointermove', onPointerMove);
   renderer.domElement.addEventListener('pointerleave', onPointerLeave);
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
   renderer.domElement.addEventListener('pointerup', onPointerUp);
 
-  function onPartPick(cb: (index: number, clientX: number, clientY: number) => void) {
+  function onPartPick(cb: (index: number | null, clientX: number, clientY: number, shiftKey: boolean) => void) {
     pickCb = cb;
   }
   function setPartColor(index: number, rgb: RGB) {
@@ -409,11 +458,15 @@ export function createViewer(container: HTMLElement): Viewer {
     if (m) m.color = color(rgb);
   }
   function highlightPart(index: number | null) {
-    selectedIndex = index;
+    selectedIndices = index !== null ? [index] : [];
+    applyHighlight();
+  }
+  function highlightParts(indices: number[]) {
+    selectedIndices = indices;
     applyHighlight();
   }
   function clearHighlight() {
-    selectedIndex = null;
+    selectedIndices = [];
     hoveredIndex = null;
     applyHighlight();
   }
@@ -450,7 +503,24 @@ export function createViewer(container: HTMLElement): Viewer {
     onPartPick,
     setPartColor,
     highlightPart,
+    highlightParts,
     clearHighlight,
+    setEditMode: (m: EditMode) => {
+      editMode = m;
+      if (editMode !== 'extrude' && editMode !== 'edges') {
+        selectedIndices = [];
+      }
+      applyHighlight();
+    },
+    setComponentHeights: (heights: Record<string, number>, stepHeight: number) => {
+      for (const mesh of partMeshes) {
+        const partData = mesh.userData.partName;
+        if (partData) {
+          const level = heights[partData] ?? 0;
+          mesh.position.z = level * stepHeight;
+        }
+      }
+    },
     dispose,
   };
 }

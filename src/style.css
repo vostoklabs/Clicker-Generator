@@ -1029,3 +1029,173 @@ button.fil-chip:active {
   color: var(--accent-text);
   border-color: var(--accent);
 }
+
+/* ===== Edit Mode Bar (viewport overlay) ===== */
+.edit-mode-bar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+  pointer-events: auto;
+}
+.edit-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+  line-height: 1;
+}
+.edit-mode-btn svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.edit-mode-btn:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+.edit-mode-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: 0 1px 6px rgba(91, 157, 255, 0.35);
+}
+
+/* ===== Extrude Gizmo Tooltip ===== */
+.extrude-tooltip {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 0.2s;
+}
+.extrude-tooltip.hidden { opacity: 0; pointer-events: none; }
+
+/* ===== Extrude Height Indicator ===== */
+.extrude-height-indicator {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 90%, transparent);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+  font-variant-numeric: tabular-nums;
+}
+.extrude-height-indicator[hidden] { display: none; }
+
+/* ===== Edges Panel (floating in viewport) ===== */
+.edges-panel {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 28px rgba(0,0,0,0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 300px;
+  max-width: 380px;
+  pointer-events: auto;
+}
+.edges-panel[hidden] { display: none; }
+.edges-panel .edges-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin: 0;
+}
+.edge-row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+.edge-row .edge-label {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.edge-row input[type="range"] {
+  width: 100%;
+  min-width: 80px;
+}
+.edge-row .edge-val {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.edge-style-btns {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+.edge-style-btn {
+  flex: 1;
+  padding: 5px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.edge-style-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.edge-style-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}

@@ -34,15 +34,31 @@ export interface RegionSet {
   aspect: number;
 }
 
+/** A color slot for the image/svg/text. */
 export interface PaletteEntry {
-  quantRgb: RGB; // color from quantization
-  filamentRgb: RGB; // user-mapped filament color (defaults to quantRgb)
+  quantRgb: RGB; // The original color grouped from the image/svg
+  filamentRgb: RGB; // The assigned physical color
   coverage: number; // fraction of foreground pixels
-  heightLevel: number; // 0 = flush with slab top; +n raises by n * stepHeight (3D lift)
 }
 
-export type BaseShapeKind = 'outline' | 'circle' | 'square';
+export type BaseShapeKind = 'outline' | 'circle' | 'square' | 'hexagon' | 'heart' | 'star' | 'egg';
 export type ViewMode = 'assembled' | 'exploded' | 'section';
+
+/** Which interaction mode the viewport is in. */
+export type EditMode = 'color' | 'extrude' | 'edges';
+
+/** Which edge group or part to modify. E.g. 'baseTop', 'capTop', or a part name like 'top-color-0-1' */
+export type EdgeTarget = string;
+
+/** Edge modification style. */
+export type EdgeStyle = 'none' | 'fillet' | 'chamfer';
+
+/** One edge-modification entry. */
+export interface EdgeSetting {
+  target: EdgeTarget;
+  style: EdgeStyle;
+  radius: number; // mm
+}
 
 export type CropRatio = 'free' | '1:1' | '4:3' | '3:2' | '16:9';
 
@@ -92,6 +108,10 @@ export interface BuildParams {
   keychainHole: boolean; // add a keyring loop on the body (+Y edge)
   baseFilamentRgb: RGB; // cap backing + stem color
   bodyColorRgb: RGB;
+  /** Component-specific height levels (partName -> level integer) */
+  componentHeights: Record<string, number>;
+  /** Edge modifications (fillet / chamfer) for body and cap edges. */
+  edgeSettings: EdgeSetting[];
 }
 
 /** Mesh payload (transferable). First 3 of each `numProp` stride are x,y,z. */
@@ -117,7 +137,6 @@ export interface ClickerPart extends MeshData {
 /** A region with its resolved filament color, ready for the worker. */
 export interface BuildRegion {
   filamentRgb: RGB;
-  heightLevel: number;
   coverage: number; // fraction of foreground — drives carve priority (small detail wins)
   rings: Ring[];
   partName: string;

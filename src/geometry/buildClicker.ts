@@ -17,7 +17,7 @@
 // small details stay crisp) and removed from the backing — clean even when flat.
 //
 // Frame: Z = 0 is the switch plate top. socket cuts downward; stem rises to +Z.
-import type { BuildParams, BuildRegion, ClickerPart, PartGroup, Ring, RGB } from '../types';
+import type { BuildParams, BuildRegion, ClickerPart, EdgeSetting, EdgeStyle, PartGroup, Ring, RGB } from '../types';
 
 type Wasm = any;
 type Solid = any;
@@ -77,7 +77,7 @@ export function buildClicker(
   // is concave (a notch) or the cap is small. The cap is sized to cover that column.
   const switchClear = socketDim + 3.0;
   const minCap = switchClear + 1.0;
-  const isOutline = params.baseShape !== 'circle' && params.baseShape !== 'square';
+  const isOutline = params.baseShape === 'outline';
 
   let imageScale = Math.max(2, params.capWidthMm - 2 * border);
   let imgW = nW * imageScale;
@@ -125,8 +125,16 @@ export function buildClicker(
     return track(rect.subtract(outerSpace));
   };
 
+  const getRingArea = (ring: Ring): number => {
+    let area = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      area += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+    }
+    return Math.abs(area / 2);
+  };
+
   const filledOutline = (): Section => {
-    const validRings = scaleRings(outline).filter((r) => r.length >= 3);
+    const validRings = scaleRings(outline).filter((r) => r.length >= 3 && getRingArea(r) > 0.001);
     if (validRings.length === 0) {
       return track(CrossSection.square([sR, sR], true));
     }
@@ -149,15 +157,72 @@ export function buildClicker(
     return sectionIsEmpty(r) ? fb : r;
   };
 
+  // --- Shape Generators ---
+  const makeHexagon = (r: number): Section => {
+    const pts: Ring = [];
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i + Math.PI / 6;
+      pts.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+    }
+    return track(new CrossSection([pts], 'NonZero'));
+  };
+
+  const makeStar = (r: number, points = 5): Section => {
+    const innerR = r * 0.4;
+    const pts: Ring = [];
+    for (let i = 0; i < points * 2; i++) {
+      const angle = (Math.PI / points) * i - Math.PI / 2;
+      const radius = i % 2 === 0 ? r : innerR;
+      pts.push([Math.cos(angle) * radius, Math.sin(angle) * radius]);
+    }
+    return track(new CrossSection([pts], 'NonZero'));
+  };
+
+  const makeHeart = (r: number): Section => {
+    const pts: Ring = [];
+    const steps = 64;
+    for (let i = 0; i < steps; i++) {
+      const t = (Math.PI * 2 * i) / steps;
+      const x = Math.sin(t);
+      const y = Math.cos(t) + Math.pow(Math.abs(Math.sin(t)), 0.6) * 0.8 - 0.2;
+      pts.push([x * r, y * r]);
+    }
+    return track(new CrossSection([pts], 'NonZero'));
+  };
+
+  const makeEgg = (r: number): Section => {
+    const pts: Ring = [];
+    const steps = 64;
+    for (let i = 0; i < steps; i++) {
+      const t = (Math.PI * 2 * i) / steps;
+      const px = r * Math.cos(t);
+      const py = r * Math.sin(t);
+      const xShape = px * (1 - 0.2 * Math.sin(t));
+      pts.push([xShape, py]);
+    }
+    return track(new CrossSection([pts], 'NonZero'));
+  };
+
   // --- Cap plate footprint (the visible top; image + frame) ---
   let plate: Section;
   if (params.baseShape === 'circle') {
     const d = Math.max(Math.hypot(imgW, imgH) + 2 * border, minCap);
     plate = track(CrossSection.circle(d / 2, 160));
   } else if (params.baseShape === 'square') {
-    const w = Math.max(imgW + 2 * border, minCap);
-    const h = Math.max(imgH + 2 * border, minCap);
-    plate = roundedRect(w, h, Math.min(w, h) * 0.22);
+    const size = Math.max(Math.max(imgW, imgH) + 2 * border, minCap);
+    plate = roundedRect(size, size, size * 0.22);
+  } else if (params.baseShape === 'hexagon') {
+    const d = Math.max(Math.hypot(imgW, imgH) + 2 * border, minCap);
+    plate = makeHexagon(d / 2);
+  } else if (params.baseShape === 'heart') {
+    const d = Math.max(Math.hypot(imgW, imgH) + 2 * border, minCap);
+    plate = makeHeart(d / 2);
+  } else if (params.baseShape === 'star') {
+    const d = Math.max(Math.hypot(imgW, imgH) + 2 * border, minCap);
+    plate = makeStar(d / 2);
+  } else if (params.baseShape === 'egg') {
+    const d = Math.max(Math.hypot(imgW, imgH) + 2 * border, minCap);
+    plate = makeEgg(d / 2);
   } else {
     const rawPlate = track(filledOutline().offset(border, 'Round', 2.0, 48));
     const solidPlate = removeHoles(rawPlate);
@@ -188,26 +253,58 @@ export function buildClicker(
 
   // The body border top sits `capProud` below the cap top, so pressing the cap down
   // by `travel` brings its top flush with the border (rest = a proud pressable button;
-  // full press = flush — matching ianku's reference). capProud ≈ travel. (The old
-  // clamp to capThickness made thin caps rest nearly flush — that was the bug.)
+  // full press = flush). capProud ≈ travel.
   const bodyBottomZ = socketBB.min[2] - params.floorThickness;
   const maxProud = Math.max(0.4, slabTopZ - cavityFloorZ - 1.0); // leave ≥1 mm of border
   const capProud = Math.max(0.4, Math.min(params.capProud, maxProud));
   const bodyTopZ = slabTopZ - capProud;
   const wellFloorZ = Math.min(cavityFloorZ, slabBottomZ - travel);
 
-  // Cap skirt: a thin wall hanging from the cap perimeter down into the well. It
-  // bridges the side gap the proud float opens up, so the switch isn't visible from
-  // the side. It rides in the `tol` slip-gap (never touches the border) and
-  // telescopes deeper as the cap is pressed. Reach `skirtOverlap` below the border
-  // top, but stop short of crashing into the well floor at full press.
+  // Cap skirt: a thin wall hanging from the cap perimeter down into the well.
+  // The bottom of the skirt (the border of the top part) aligns exactly with the bottom
+  // of the stem so that the top part can stand completely flat on a table.
   const skirtThickness = 1.4;
-  const skirtOverlap = 1.5;
-  const skirtBottomZ = Math.max(wellFloorZ + travel + 0.5, bodyTopZ - skirtOverlap);
+  const skirtBottomZ = stemBB.min[2];
   const skirtLen = slabBottomZ - skirtBottomZ;
 
-  const extrudeAt = (cs: Section, h: number, z: number): Solid =>
-    track(track(Manifold.extrude(cs, h)).translate([0, 0, z]));
+  const extrudeAt = (cs: Section, h: number, z: number): Solid => {
+    if (sectionIsEmpty(cs)) {
+      // Return a tiny cube far away or hidden inside, to avoid typing issues or we can just try to avoid calling it
+      // Actually, Manifold handles empty cross sections by returning an empty solid IF we don't crash.
+      // Wait, Manifold.extrude DOES crash on empty CrossSection. 
+      // Let's create a tiny solid and subtract it from itself to get a true empty solid.
+      const dummy = track(track(Manifold.extrude(track(CrossSection.circle(0.1, 3)), 0.1)).translate([0, 0, z]));
+      return track(dummy.subtract(dummy));
+    }
+    return track(track(Manifold.extrude(cs, Math.max(0.01, h))).translate([0, 0, z]));
+  };
+
+  const createEdgeBevelBlock = (footprint: Section, r: number, style: EdgeStyle, zRef: number, isBottom: boolean): Solid | null => {
+    const steps = style === 'chamfer' ? 5 : 8;
+    let block: Solid | null = null;
+    for (let i = 0; i < steps; i++) {
+      const t1 = i / steps;
+      const t2 = (i + 1) / steps;
+      
+      const r1 = style === 'chamfer' ? r * t1 : r * (1 - Math.cos(t1 * Math.PI / 2));
+      const z1 = style === 'chamfer' ? r * t1 : r * Math.sin(t1 * Math.PI / 2);
+      const z2 = style === 'chamfer' ? r * t2 : r * Math.sin(t2 * Math.PI / 2);
+      
+      const widthToSubtract = r - r1;
+      if (widthToSubtract < 0.01) continue;
+      
+      const innerSection = track(footprint.offset(-widthToSubtract, 'Round', 2.0, 64));
+      if (sectionIsEmpty(innerSection)) continue;
+      
+      const ring = track(footprint.subtract(innerSection));
+      const dz = z2 - z1;
+      const stepZ = isBottom ? zRef + z1 : zRef - z2;
+      
+      const stepSolid = extrudeAt(ring, dz + 0.01, stepZ);
+      block = block ? track(block.add(stepSolid)) : stepSolid;
+    }
+    return block;
+  };
 
   const parts: ClickerPart[] = [];
 
@@ -218,34 +315,65 @@ export function buildClicker(
   //     colors win at shared boundaries. Clean even when all colors are flat.
   //     topSlab is exactly `imageDepth` tall so inlays end flush with the cap's
   //     top face (slabTopZ) — the top reads as ONE flat surface, not raised. ---
-  const topSlab = extrudeAt(imageArea, imageDepth, imageBottomZ);
   const ordered = regions
     .map((r) => ({ r }))
     .sort((a, b) => (a.r.coverage ?? 1) - (b.r.coverage ?? 1));
-  let placed: Solid | null = null; // union of inlays already carved (no overlap)
-  let inlayUnion: Solid | null = null; // union of all inlays (removed from base)
+    
+  let placed2D: Section | null = null; // 2D union of inlays already carved (no overlap)
+  let holeUnion: Solid | null = null; // 3D union of all holes to subtract from base
+
   for (const { r } of ordered) {
-    let cs: Section = track(new CrossSection(scaleRings(r.rings), 'NonZero'));
+    const validRings = scaleRings(r.rings).filter(ring => ring.length >= 3 && getRingArea(ring) > 0.001);
+    if (validRings.length === 0) continue;
+    let cs: Section = track(new CrossSection(validRings, 'NonZero'));
     if (params.colorBleed > 0.001) cs = grow(cs, params.colorBleed);
     const clipped = track(cs.intersect(imageArea));
     if (sectionIsEmpty(clipped)) continue;
-    const prism = extrudeAt(clipped, imageDepth + 2, imageBottomZ - 1);
-    let inlay: Solid = track(topSlab.intersect(prism));
-    if (placed) inlay = track(inlay.subtract(placed)); // don't overlap earlier colors
+    
+    // Prevent overlapping with smaller parts processed earlier
+    let fp = clipped;
+    if (placed2D) fp = track(fp.subtract(placed2D));
+    if (sectionIsEmpty(fp)) continue;
+    
+    placed2D = placed2D ? track(placed2D.add(fp)) : fp;
+
+    const level = params.componentHeights?.[r.partName] ?? 0;
+    const heightShift = level * params.stepHeight;
+    const topZ = slabTopZ + Math.max(0, heightShift);
+    const bottomZ = imageBottomZ + Math.min(0, heightShift);
+    
+    let inlay: Solid = extrudeAt(fp, topZ - bottomZ, bottomZ);
     if (inlay.isEmpty()) continue;
 
-    const level = Math.max(0, r.heightLevel ?? 0);
-    if (level > 0) {
-      const lift = extrudeAt(clipped, level * params.stepHeight, slabTopZ - 0.01);
-      inlay = track(inlay.add(lift));
+    // Apply specific edge setting if configured
+    const es = params.edgeSettings?.find(s => s.target === r.partName);
+    if (es && es.style !== 'none' && es.radius >= 0.05) {
+      const radius = Math.min(es.radius, (topZ - bottomZ) * 0.3, 2.5);
+      if (radius >= 0.05) {
+        const shrunk = track(fp.offset(-radius, 'Round', 2.0, 64));
+        if (!sectionIsEmpty(shrunk)) {
+          const ring = track(fp.subtract(shrunk));
+          if (es.style === 'chamfer') {
+            const modBlock = extrudeAt(ring, radius + 0.02, topZ - radius);
+            inlay = track(inlay.subtract(modBlock));
+          } else if (es.style === 'fillet') {
+            const modBlock = extrudeAt(ring, radius + 0.02, topZ - radius);
+            inlay = track(inlay.subtract(modBlock));
+          }
+        }
+      }
     }
+
     parts.push(toPart(inlay, 'cap', 'top', r.filamentRgb, r.partName));
-    placed = placed ? track(placed.add(inlay)) : inlay;
-    inlayUnion = inlayUnion ? track(inlayUnion.add(inlay)) : inlay;
+    
+    // The hole carved in the base must go down to bottomZ, and extend up at least to slabTopZ 
+    // so we fully clear the original backing.
+    const holePrism = extrudeAt(fp, slabTopZ - bottomZ + 0.02, bottomZ - 0.01);
+    holeUnion = holeUnion ? track(holeUnion.add(holePrism)) : holePrism;
   }
 
-  // Base-color cap = plate − inlays, then ∪ stem ∪ perimeter skirt.
-  let base: Solid = inlayUnion ? track(cap.subtract(inlayUnion)) : cap;
+  // Base-color cap = plate − holeUnion, then ∪ stem ∪ perimeter skirt.
+  let base: Solid = holeUnion ? track(cap.subtract(holeUnion)) : cap;
   base = track(base.add(stem));
   if (skirtLen > 0.4) {
     // Root issue: any 2-D ring-minus-stemZone is algebraically identical to
@@ -304,7 +432,28 @@ export function buildClicker(
   }
 
   if (!body.isEmpty()) {
+    // --- Edge modifications: fillet / chamfer ---
+    body = applyEdges(body, params.edgeSettings, bodyFootprint, bodyBottomZ, bodyTopZ, wellFloorZ);
     parts.push(toPart(body, 'body', 'base', params.bodyColorRgb, 'base-body'));
+  }
+
+  // --- Cap edge modifications ---
+  if (parts.length > 0) {
+    const basePartIdx = parts.findIndex(p => p.name === 'top-base');
+    if (basePartIdx >= 0) {
+      for (const es of params.edgeSettings) {
+        if (es.target === 'capTop') {
+          const r = Math.min(es.radius, backing * 0.4, 2.0);
+          if (r > 0.05) {
+            const modBlock = createEdgeBevelBlock(plate, r, es.style, slabTopZ, false);
+            if (modBlock) {
+              base = track(base.subtract(modBlock));
+              parts[basePartIdx] = toPart(base, 'cap', 'top', params.baseFilamentRgb, 'top-base');
+            }
+          }
+        }
+      }
+    }
   }
 
   for (const o of trash) {
@@ -316,6 +465,39 @@ export function buildClicker(
   }
 
   return parts;
+
+  /** Apply fillet/chamfer edge modifications to the body solid. */
+  function applyEdges(
+    bodyIn: Solid,
+    edgeSettings: EdgeSetting[],
+    footprint: Section,
+    bottomZ: number,
+    topZ: number,
+    _wellFloorZ: number,
+  ): Solid {
+    let result = bodyIn;
+    for (const es of edgeSettings) {
+      if (es.style === 'none' || es.radius < 0.05) continue;
+      if (es.target === 'capTop') continue; // handled separately on the cap
+      const r = Math.min(es.radius, (topZ - bottomZ) * 0.3, 2.5);
+      if (r < 0.05) continue;
+
+      // Shrink the footprint inward by `r` to get the "inner" edge
+      const inner = track(footprint.offset(-r, 'Round', 2.0, 64));
+      if (sectionIsEmpty(inner)) continue;
+
+      if (es.target === 'baseTop') {
+        // Remove material from the top edge of the body
+        const modBlock = createEdgeBevelBlock(footprint, r, es.style, topZ, false);
+        if (modBlock) result = track(result.subtract(modBlock));
+      } else if (es.target === 'baseBottom') {
+        // Remove material from the bottom edge of the body
+        const modBlock = createEdgeBevelBlock(footprint, r, es.style, bottomZ, true);
+        if (modBlock) result = track(result.subtract(modBlock));
+      }
+    }
+    return result;
+  }
 
   function toPart(
     solid: Solid,

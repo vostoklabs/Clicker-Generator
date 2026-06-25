@@ -1,4 +1,4 @@
-import type { BaseShapeKind, PaletteEntry, ViewMode, RGB } from '../types';
+import type { BaseShapeKind, EditMode, EdgeSetting, EdgeStyle, PaletteEntry, ViewMode, RGB } from '../types';
 import { FILAMENTS } from '../types';
 import type { SectionAxis } from '../viewer/viewer';
 import { SAMPLES } from '../image/sample';
@@ -33,6 +33,16 @@ export interface UiState {
   baseColorOverride: RGB | null;
   /** Component-specific overrides (key: 'top-color-{colorIndex}-{compIndex}') */
   partOverrides: Record<string, RGB>;
+  /** Current edit mode for the 3D viewport. */
+  editMode: EditMode;
+  /** Edge modification settings (fillet / chamfer). */
+  edgeSettings: EdgeSetting[];
+  /** Current extrude height being dragged (for HUD display), null when not dragging. */
+  extrudeHeight: number | null;
+  /** Component-specific heights */
+  componentHeights: Record<string, number>;
+  /** Which parts are currently selected in the viewport (part names). */
+  selectedParts: string[];
 }
 
 export interface UiCallbacks {
@@ -41,7 +51,6 @@ export interface UiCallbacks {
   onColorCount(n: number): void;
   onSmoothing(v: number): void;
   onFilament(index: number, hex: string): void;
-  onHeight(index: number, level: number): void;
   onShape(kind: BaseShapeKind): void;
   onWidth(mm: number): void;
   onTopThickness(mm: number): void;
@@ -68,6 +77,10 @@ export interface UiCallbacks {
   onFontSelect(fontId: string): void;
   onImportFont(file: File): void;
   onThemeChange(theme: string): void;
+  onEditMode(mode: EditMode): void;
+  onEdgeStyle(target: string, style: EdgeStyle): void;
+  onEdgeStep(target: string, delta: number): void;
+  onExtrudeStep(delta: number): void;
   onGenerate(): void;
 }
 
@@ -184,6 +197,10 @@ export function createUi(
         <select id="shapeSelect">
           <option value="circle">Circle</option>
           <option value="square">Square</option>
+          <option value="hexagon">Hexagon</option>
+          <option value="heart">Heart</option>
+          <option value="star">Star</option>
+          <option value="egg">Egg</option>
         </select>
       </div>
       <div class="prow-stacked">
@@ -589,6 +606,85 @@ export function createUi(
       `;
       viewport.appendChild(overlay);
     }
+
+    // --- Edit Mode Bar (Color / Extrude / Edges) ---
+    const modeBar = document.createElement('div');
+    modeBar.id = 'editModeBar';
+    modeBar.className = 'edit-mode-bar';
+    modeBar.innerHTML = `
+      <button class="edit-mode-btn active" data-editmode="color" type="button">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+        Color
+      </button>
+      <button class="edit-mode-btn" data-editmode="extrude" type="button">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+        Extrude
+      </button>
+      <button class="edit-mode-btn" data-editmode="edges" type="button">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4" ry="4"/></svg>
+        Edges
+      </button>
+    `;
+    viewport.appendChild(modeBar);
+    modeBar.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-editmode]') as HTMLElement | null;
+      if (btn) cb.onEditMode(btn.dataset.editmode as EditMode);
+    });
+
+    // --- Extrude Panel ---
+    const extrudePanel = document.createElement('div');
+    extrudePanel.id = 'extrudePanel';
+    extrudePanel.className = 'edges-panel';
+    extrudePanel.setAttribute('hidden', '');
+    extrudePanel.innerHTML = `
+      <div class="edges-title">Extrude Part</div>
+      <div id="extrudeLevelLabel" style="text-align:center; margin-top:8px; font-size:13px; color:var(--muted);">Level: 0</div>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button type="button" class="btn" id="extrudeMinus" style="flex:1; font-size:18px;">-</button>
+        <button type="button" class="btn" id="extrudePlus" style="flex:1; font-size:18px;">+</button>
+      </div>
+      <button type="button" class="btn primary" id="extrudeSync" style="margin-top:8px;">Sync Geometry</button>
+    `;
+    viewport.appendChild(extrudePanel);
+
+    extrudePanel.querySelector('#extrudeMinus')?.addEventListener('click', () => cb.onExtrudeStep(-1));
+    extrudePanel.querySelector('#extrudePlus')?.addEventListener('click', () => cb.onExtrudeStep(1));
+    extrudePanel.querySelector('#extrudeSync')?.addEventListener('click', () => cb.onGenerate());
+
+    // --- Edges Panel ---
+    const edgesPanel = document.createElement('div');
+    edgesPanel.id = 'edgesPanel';
+    edgesPanel.className = 'edges-panel';
+    edgesPanel.setAttribute('hidden', '');
+    edgesPanel.innerHTML = `
+      <div class="edges-title" id="edgesTitle">Edge Modifications</div>
+      <div id="edgesContent"></div>
+      <button type="button" class="btn primary" id="edgesSync" style="margin-top:8px;">Sync Geometry</button>
+    `;
+    viewport.appendChild(edgesPanel);
+
+    edgesPanel.querySelector('#edgesSync')?.addEventListener('click', () => cb.onGenerate());
+
+    edgesPanel.addEventListener('click', (e) => {
+      const targetEl = e.target as HTMLElement;
+      
+      const styleBtn = targetEl.closest('.edge-style-btn') as HTMLElement | null;
+      if (styleBtn) {
+        const btnsRow = styleBtn.closest('.edge-style-btns') as HTMLElement;
+        btnsRow.querySelectorAll('.edge-style-btn').forEach(b => b.classList.remove('active'));
+        styleBtn.classList.add('active');
+        const target = btnsRow.dataset.edge;
+        const style = styleBtn.dataset.style as EdgeSetting['style'];
+        if (target) cb.onEdgeStyle(target, style);
+      }
+
+      if (targetEl.classList.contains('edge-size-minus') || targetEl.classList.contains('edge-size-plus')) {
+        const sizeRow = targetEl.closest('.edge-size-btns') as HTMLElement;
+        const target = sizeRow.dataset.edge;
+        const delta = targetEl.classList.contains('edge-size-minus') ? -0.2 : 0.2;
+        if (target) cb.onEdgeStep(target, delta);
+      }
+    });
   }
 
   // --- Import mode tabs ---
@@ -1012,6 +1108,112 @@ export function createUi(
       galleryEl.querySelectorAll('.icon').forEach((n) => {
         n.classList.toggle('active', n.getAttribute('title') === state.currentIconName);
       });
+    }
+
+    // --- Edit mode bar ---
+    const modeBarEl = document.getElementById('editModeBar');
+    if (modeBarEl) {
+      for (const b of modeBarEl.querySelectorAll<HTMLElement>('[data-editmode]')) {
+        b.classList.toggle('active', b.dataset.editmode === state.editMode);
+      }
+    }
+
+    // --- Extrude tooltip ---
+    const extrudeTooltipEl = document.getElementById('extrudeTooltip');
+    if (extrudeTooltipEl) {
+      extrudeTooltipEl.classList.toggle('hidden', state.editMode !== 'extrude');
+    }
+
+    // --- Edit mode UI toggles ---
+    const modeBarBtns = document.querySelectorAll('.edit-mode-btn');
+    modeBarBtns.forEach(b => {
+      b.classList.toggle('active', (b as HTMLElement).dataset.editmode === state.editMode);
+    });
+
+    // --- Extrude panel ---
+    const extrudePanelEl = document.getElementById('extrudePanel');
+    if (extrudePanelEl) {
+      if (state.editMode === 'extrude') {
+        extrudePanelEl.removeAttribute('hidden');
+        const plusBtn = extrudePanelEl.querySelector('#extrudePlus') as HTMLButtonElement;
+        const minusBtn = extrudePanelEl.querySelector('#extrudeMinus') as HTMLButtonElement;
+        const labelEl = extrudePanelEl.querySelector('#extrudeLevelLabel');
+        
+        if (state.selectedParts.length === 0) {
+          if (plusBtn) plusBtn.disabled = true;
+          if (minusBtn) minusBtn.disabled = true;
+          if (labelEl) labelEl.textContent = 'Select a part';
+        } else {
+          if (plusBtn) plusBtn.disabled = false;
+          if (minusBtn) minusBtn.disabled = false;
+          if (labelEl) {
+            const firstPart = state.selectedParts[0];
+            const level = state.componentHeights[firstPart] ?? 0;
+            labelEl.textContent = `Level: ${level.toFixed(1)}`;
+          }
+        }
+      } else {
+        extrudePanelEl.setAttribute('hidden', '');
+      }
+    }
+
+    // --- Edges panel ---
+    const edgesPanelEl = document.getElementById('edgesPanel');
+    const edgesContentEl = document.getElementById('edgesContent');
+    const edgesTitleEl = document.getElementById('edgesTitle');
+    if (edgesPanelEl && edgesContentEl && edgesTitleEl) {
+      if (state.editMode === 'edges') {
+        edgesPanelEl.removeAttribute('hidden');
+        
+        // Build edge rows based on selected parts (or default globals if none selected)
+        let targets = state.selectedParts.length > 0 ? state.selectedParts : ['capTop', 'baseTop', 'baseBottom'];
+        edgesTitleEl.textContent = state.selectedParts.length > 0 ? 'Part Edges' : 'Global Edges';
+        
+        // Rebuild DOM only if targets changed (crude but effective)
+        const currentTargets = Array.from(edgesContentEl.querySelectorAll('.edge-style-btns')).map(r => (r as HTMLElement).dataset.edge);
+        if (targets.join(',') !== currentTargets.join(',')) {
+          edgesContentEl.innerHTML = targets.map(t => {
+            const label = t === 'capTop' ? 'Cap Top' : t === 'baseTop' ? 'Base Top' : t === 'baseBottom' ? 'Base Bottom' : t;
+            return `
+              <div class="edge-label" title="${t}" style="margin-bottom: 4px;">${label} <span class="edge-radius-label" style="color:var(--muted);"></span></div>
+              <div class="edge-style-btns" data-edge="${t}" style="margin-bottom: 8px;">
+                <button class="edge-style-btn active" data-style="none" type="button">None</button>
+                <button class="edge-style-btn" data-style="fillet" type="button">Fillet</button>
+                <button class="edge-style-btn" data-style="chamfer" type="button">Chamfer</button>
+              </div>
+              <div class="edge-size-btns" data-edge="${t}" style="display:flex; gap:8px; margin-bottom: 12px; display: none;">
+                <button class="btn edge-size-minus" type="button" style="flex:1;">-</button>
+                <button class="btn edge-size-plus" type="button" style="flex:1;">+</button>
+              </div>
+            `;
+          }).join('');
+        }
+        
+        // Sync button state from edgeSettings
+        for (const target of targets) {
+          const es = state.edgeSettings.find(s => s.target === target) || { target, style: 'none', radius: 1.0 };
+          const btnsRow = edgesContentEl.querySelector(`.edge-style-btns[data-edge="${target}"]`) as HTMLElement;
+          const sizeRow = edgesContentEl.querySelector(`.edge-size-btns[data-edge="${target}"]`) as HTMLElement;
+          const labelRow = edgesContentEl.querySelector(`.edge-label[title="${target}"] .edge-radius-label`) as HTMLElement;
+          
+          if (btnsRow) {
+            btnsRow.querySelectorAll('.edge-style-btn').forEach(b => {
+              b.classList.toggle('active', (b as HTMLElement).dataset.style === es.style);
+            });
+          }
+          if (sizeRow && labelRow) {
+            if (es.style === 'none') {
+               sizeRow.style.display = 'none';
+               labelRow.textContent = '';
+            } else {
+               sizeRow.style.display = 'flex';
+               labelRow.textContent = `(${es.radius.toFixed(1)} mm)`;
+            }
+          }
+        }
+      } else {
+        edgesPanelEl.setAttribute('hidden', '');
+      }
     }
   }
 

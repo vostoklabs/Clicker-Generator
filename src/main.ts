@@ -14,6 +14,7 @@ import type {
   BuildParams,
   BuildRegion,
   ClickerPart,
+  EdgeStyle,
   GeometryResponse,
   PaletteEntry,
   RegionSet,
@@ -60,6 +61,15 @@ const store = createStore<UiState>({
   paletteOverrides: [],
   baseColorOverride: null,
   partOverrides: {},
+  editMode: 'color',
+  edgeSettings: [
+    { target: 'capTop', style: 'none', radius: 0 },
+    { target: 'baseTop', style: 'none', radius: 0 },
+    { target: 'baseBottom', style: 'none', radius: 0 },
+  ],
+  extrudeHeight: null,
+  componentHeights: {},
+  selectedParts: [],
 });
 
 // ---- Heavy data kept out of the reactive store ----
@@ -114,14 +124,6 @@ const ui = createUi(sidebarLeft, sidebarRight, statusEl, {
       overrides[i] = hexToRgb(hex);
       store.set({ paletteOverrides: overrides });
 
-      debouncedRebuild();
-    }
-  },
-  onHeight: (i, level) => {
-    const palette = store.get().palette.slice();
-    if (palette[i]) {
-      palette[i] = { ...palette[i], heightLevel: Math.max(0, Math.min(6, level)) };
-      store.set({ palette });
       debouncedRebuild();
     }
   },
@@ -245,6 +247,56 @@ const ui = createUi(sidebarLeft, sidebarRight, statusEl, {
   onGenerate: () => {
     reprocess();
   },
+  onEditMode: (mode) => {
+    store.set({ editMode: mode });
+    viewer.setEditMode(mode);
+    // When leaving extrude mode, sync the geometry to match the visual preview
+    if (mode !== 'extrude') {
+      debouncedRebuild();
+    }
+  },
+  onEdgeStyle: (target: string, style: EdgeStyle) => {
+    const s = store.get();
+    const edgeSettings = [...s.edgeSettings];
+    const idx = edgeSettings.findIndex(x => x.target === target);
+    if (idx >= 0) {
+      edgeSettings[idx] = { ...edgeSettings[idx], style };
+    } else {
+      edgeSettings.push({ target, style, radius: 1.0 });
+    }
+    store.set({ edgeSettings });
+  },
+  onEdgeStep: (target: string, delta: number) => {
+    const s = store.get();
+    const edgeSettings = [...s.edgeSettings];
+    const idx = edgeSettings.findIndex(x => x.target === target);
+    const current = idx >= 0 ? edgeSettings[idx].radius : 1.0;
+    const next = Math.max(0.2, Math.min(5.0, current + delta));
+    if (idx >= 0) {
+      edgeSettings[idx] = { ...edgeSettings[idx], radius: next };
+    } else {
+      edgeSettings.push({ target, style: 'fillet', radius: next });
+    }
+    store.set({ edgeSettings });
+  },
+  onExtrudeStep: (delta: number) => {
+    const s = store.get();
+    if (s.selectedParts.length === 0) return;
+    const componentHeights = { ...s.componentHeights };
+    let changed = false;
+    for (const partName of s.selectedParts) {
+      const current = componentHeights[partName] ?? 0;
+      const next = Math.max(-5, Math.min(6, current + delta));
+      if (current !== next) {
+        componentHeights[partName] = next;
+        changed = true;
+      }
+    }
+    if (changed) {
+      store.set({ componentHeights });
+      viewer.setComponentHeights(componentHeights, 0.6); // 0.6mm step
+    }
+  }
 });
 
 store.subscribe((s) => ui.update(s));
@@ -261,18 +313,39 @@ SAMPLES[0].load().then((img) => {
 });
 
 // ---- Click a colored region on the 3D model to recolor it (live, no rebuild) ----
-viewer.onPartPick((index, clientX, clientY) => {
-  const part = latestParts[index];
-  if (!part) {
-    viewer.clearHighlight();
-    return;
-  }
-  const target = partColorTarget(part.name);
-  if (!target) {
-    viewer.clearHighlight();
-    return;
-  }
+viewer.onPartPick((index, clientX, clientY, shiftKey) => {
   const s = store.get();
+  
+  if (index === null) {
+    if (s.editMode !== 'color') store.set({ selectedParts: [] });
+    return;
+  }
+
+  if (s.editMode !== 'color') {
+    // Sync the selected parts to UI state for the Edge panel
+    // We get the selected indices implicitly from the viewer, but we need to track them by name
+    const partName = latestParts[index]?.name;
+    if (partName) {
+      let nextSelected = s.selectedParts.slice();
+      if (shiftKey) {
+        if (nextSelected.includes(partName)) {
+          nextSelected = nextSelected.filter(p => p !== partName);
+        } else {
+          nextSelected.push(partName);
+        }
+      } else {
+        nextSelected = [partName];
+      }
+      store.set({ selectedParts: nextSelected });
+    }
+    return;
+  }
+
+  const part = latestParts[index];
+  if (!part) return;
+  const target = partColorTarget(part.name);
+  if (!target) return;
+
   const options: RGB[] =
     s.colorMode === 'limited' && s.limitedColors.length > 0
       ? s.limitedColors
@@ -292,6 +365,8 @@ function partColorTarget(name: string): ColorTarget | null {
   }
   return null;
 }
+
+// --- Edit Mode Event Hooks (Gizmo Drag Handlers Removed) ---
 
 // Apply a recolor to the clicked part: update the live material + export data, and
 // persist into store state so it survives rebuilds. Geometry is identical for a
@@ -408,7 +483,7 @@ worker.onmessage = (e: MessageEvent<GeometryResponse>) => {
       store.set({
         building: false,
         hasParts: msg.parts.length > 0,
-        status: `Clicker ready ✓  ${msg.parts.length} parts. Orbit to inspect, then Download 3MF.`,
+        status: '', // Clear the banner when ready
       });
       isInitialLoad = false;
       break;
@@ -533,7 +608,6 @@ function reprocess() {
     quantRgb: r.quantRgb,
     filamentRgb: s.paletteOverrides[i] ?? r.quantRgb,
     coverage: r.coverage,
-    heightLevel: 0,
   }));
   store.set({ palette });
 
@@ -555,12 +629,10 @@ function rebuild() {
   const regions: BuildRegion[] = [];
   regionSet.regions.forEach((r, i) => {
     const baseColor = s.palette[i]?.filamentRgb ?? r.quantRgb;
-    const heightLevel = s.palette[i]?.heightLevel ?? 0;
     r.components.forEach((comp, j) => {
       const partName = `top-color-${i}-${j}`;
       regions.push({
         filamentRgb: s.partOverrides?.[partName] ?? baseColor,
-        heightLevel,
         coverage: r.coverage, // Use the parent coverage for priority
         rings: comp.rings,
         partName,
@@ -594,6 +666,8 @@ function rebuild() {
     keychainHole: s.keychain,
     baseFilamentRgb: capBaseColor,
     bodyColorRgb: s.bodyColorRgb ?? ([120, 124, 130] as RGB),
+    edgeSettings: s.edgeSettings,
+    componentHeights: s.componentHeights,
   };
 
   if (isInitialLoad) {
@@ -695,8 +769,10 @@ function saveProject() {
       paletteOverrides: s.paletteOverrides,
       baseColorOverride: s.baseColorOverride,
       partOverrides: s.partOverrides,
+      edgeSettings: s.edgeSettings,
+      componentHeights: s.componentHeights,
     },
-    palette: s.palette, // filament mappings + height levels
+    palette: s.palette, // filament mappings
     image: originalImage ? imageToDataUrl(originalImage) : null,
   };
   downloadBlob(new Blob([JSON.stringify(proj)], { type: 'application/json' }), 'clicker-project.json');
@@ -736,6 +812,8 @@ async function loadProject(file: File) {
       bodyColorRgb: set.bodyColorRgb ?? [120, 124, 130],
       paletteOverrides: set.paletteOverrides ?? [],
       partOverrides: set.partOverrides ?? {},
+      edgeSettings: set.edgeSettings ?? store.get().edgeSettings,
+      componentHeights: set.componentHeights ?? {},
     });
 
     if (set.importMode === 'image' && proj.image) {
@@ -748,7 +826,6 @@ async function loadProject(file: File) {
       const pal = store.get().palette.map((p, i) => ({
         ...p,
         filamentRgb: proj.palette[i]?.filamentRgb ?? p.filamentRgb,
-        heightLevel: proj.palette[i]?.heightLevel ?? p.heightLevel,
       }));
       store.set({ palette: pal, baseColorOverride: set.baseColorOverride ?? null });
       rebuild();
