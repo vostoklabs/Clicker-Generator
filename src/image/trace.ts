@@ -39,7 +39,7 @@ export function traceRegions(q: QuantizeResult, smoothing = 0.5): RegionSet {
 
   const contourGen = contours().size([width, height]).thresholds([0.5]);
   const minRingArea = 0.0004 * maxSide * maxSide; // drop noise specks (px²)
-  const resampleStep = Math.max(1.2, maxSide / 480); // uniform contour spacing (px)
+  const resampleStep = Math.max(0.6, maxSide / 720); // uniform contour spacing (px) - higher resolution
   // Smoothing strength → Gaussian sigma in px. `smoothing` is 0..1 from the UI.
   const sigmaPx = 1.0 + Math.max(0, Math.min(1, smoothing)) * 14;
   const sigmaPts = Math.max(0.6, sigmaPx / resampleStep);
@@ -58,7 +58,7 @@ export function traceRegions(q: QuantizeResult, smoothing = 0.5): RegionSet {
         if (Math.abs(ringArea(r)) < minRingArea) continue;
         const sampled = resampleClosed(r, resampleStep);
         const smooth = gaussianSmoothClosed(sampled, sigmaPts);
-        const simplified = rdp(smooth, resampleStep * 0.4);
+        const simplified = rdp(smooth, resampleStep * 0.25); // higher resolution simplification
         if (simplified.length >= 3) out.push(simplified.map(norm));
       }
     }

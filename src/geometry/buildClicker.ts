@@ -96,7 +96,7 @@ export function buildClicker(
     let acc: Section | null = null;
     for (const ring of scaleRings(outline)) {
       if (ring.length < 3) continue;
-      const piece = track(new CrossSection([ring], 'EvenOdd'));
+      const piece = track(new CrossSection([ring], 'NonZero'));
       acc = acc ? track(acc.add(piece)) : piece;
     }
     return acc ?? track(CrossSection.square([sR, sR], true));
@@ -188,7 +188,7 @@ export function buildClicker(
   let placed: Solid | null = null; // union of inlays already carved (no overlap)
   let inlayUnion: Solid | null = null; // union of all inlays (removed from base)
   for (const { r, i } of ordered) {
-    let cs: Section = track(new CrossSection(scaleRings(r.rings), 'EvenOdd'));
+    let cs: Section = track(new CrossSection(scaleRings(r.rings), 'NonZero'));
     if (params.colorBleed > 0.001) cs = grow(cs, params.colorBleed);
     const clipped = track(cs.intersect(imageArea));
     if (sectionIsEmpty(clipped)) continue;

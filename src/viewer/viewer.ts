@@ -59,7 +59,8 @@ export function createViewer(container: HTMLElement): Viewer {
   let sectionPos = 0;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1b1b1f);
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  scene.background = new THREE.Color(currentTheme === 'dark' ? 0x15171c : 0xf3f4f6);
 
   const camera = new THREE.PerspectiveCamera(
     45,
@@ -78,9 +79,21 @@ export function createViewer(container: HTMLElement): Viewer {
   scene.add(key);
   scene.add(new THREE.AmbientLight(0xffffff, 0.2));
 
-  const grid = new THREE.GridHelper(300, 30, 0x3a3a3a, 0x262626);
-  grid.rotation.x = Math.PI / 2;
-  scene.add(grid);
+  let gridZ = -20;
+  let grid: THREE.GridHelper | null = null;
+
+  function rebuildGrid(theme: string, z: number) {
+    if (grid) scene.remove(grid);
+    gridZ = z;
+    const accentColor = theme === 'dark' ? 0x5b9dff : 0x2563eb;
+    const gridColor = theme === 'dark' ? 0x2d3139 : 0xd1d5db;
+    grid = new THREE.GridHelper(300, 30, accentColor, gridColor);
+    grid.rotation.x = Math.PI / 2;
+    grid.position.z = gridZ;
+    scene.add(grid);
+  }
+
+  rebuildGrid(currentTheme, gridZ);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -138,6 +151,11 @@ export function createViewer(container: HTMLElement): Viewer {
     bounds.copy(size);
     explodeOffset = size.z * 0.8 + 10;
     applyView();
+
+    // Position grid well below the bottom of the clicker
+    const bottomZ = box.min.z - center.z;
+    const activeTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    rebuildGrid(activeTheme, bottomZ - 12);
 
     const radius = Math.max(size.x, size.y, size.z) * 1.4 + 10;
     camera.position.set(radius, -radius, radius * 0.75);
