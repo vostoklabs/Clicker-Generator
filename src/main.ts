@@ -73,7 +73,7 @@ let currentSvgText = '';
 let currentSvgName = '';
 let currentIconText = '';
 let currentIconName = '';
-let currentText = 'A';
+let currentText = 'Custom\nText';
 let currentFontId = 'helvetiker-regular';
 let isInitialLoad = true;
 
@@ -190,10 +190,12 @@ const ui = createUi(sidebarLeft, sidebarRight, statusEl, {
   },
 
   onImportMode: (mode) => {
-    store.set({ importMode: mode });
-    if (mode !== 'image') {
-      store.set({ colorMode: 'normal' });
-    }
+    const s = store.get();
+    store.set({
+      importMode: mode,
+      baseShape: mode === 'text' ? 'outline' : s.baseShape,
+      colorMode: mode !== 'image' ? 'normal' : s.colorMode,
+    });
     reprocess();
   },
   onSvgUpload: async (file) => {
@@ -518,7 +520,7 @@ function reprocess() {
   } else if (s.importMode === 'text') {
     try {
       store.set({ building: true, status: 'Generating Text…' });
-      regionSet = parseLetter(currentText, currentFontId, 8);
+      regionSet = parseLetter(currentText, currentFontId, 15);
     } catch (e: any) {
       store.set({ building: false, status: 'Error: ' + e.message });
       return;
@@ -575,13 +577,14 @@ function rebuild() {
   // deriveFrameColor). A frame the user pinned by clicking the model wins over it.
   const capBaseColor: RGB = s.baseColorOverride ?? deriveFrameColor(s);
 
+  const isText = s.importMode === 'text';
   const params: BuildParams = {
     baseShape: effectiveBaseShape,
     capWidthMm: s.capWidthMm,
     topThickness: Math.max(1, s.topThickness),
     imageDepth: s.imageDepth,
-    imageMargin: 1.2,
-    borderWidth: 2.6,
+    imageMargin: isText ? 2.5 : 1.2,
+    borderWidth: isText ? 3.5 : 2.6,
     capProud: 4.0,
     tolerance: s.tolerance,
     colorBleed: 0.12,
@@ -706,7 +709,7 @@ async function loadProject(file: File) {
     const proj = JSON.parse(await file.text());
     const set = proj.settings ?? {};
 
-    currentText = set.currentText ?? 'A';
+    currentText = set.currentText ?? 'Custom\nText';
     currentFontId = set.currentFontId ?? 'helvetiker-regular';
     currentSvgText = set.currentSvgText ?? '';
     currentSvgName = set.currentSvgName ?? '';

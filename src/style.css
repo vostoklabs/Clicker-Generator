@@ -994,3 +994,38 @@ button.fil-chip:active {
   border-top: 1px solid var(--line);
   z-index: 5;
 }
+
+/* Custom Font Grid */
+.font-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  max-height: 250px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.font-grid-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 12px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: center;
+  font-size: 16px;
+  line-height: normal;
+  min-height: 44px;
+  transition: all 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.font-grid-btn:hover {
+  background: var(--hover);
+  border-color: var(--muted);
+}
+.font-grid-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}

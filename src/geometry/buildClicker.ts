@@ -92,6 +92,39 @@ export function buildClicker(
   const scaleRings = (rings: Ring[]): Ring[] =>
     rings.map((r) => r.map(([x, y]) => [x * sR, y * sR] as [number, number]));
 
+  const removeHoles = (cs: Section): Section => {
+    if (sectionIsEmpty(cs)) return cs;
+    
+    // Create a giant bounding rectangle that definitely covers the shape
+    const rect = track(CrossSection.square([1000, 1000], true));
+    
+    // Invert the shape. The outer space becomes one giant solid, 
+    // and internal holes become smaller separate solid islands.
+    const inverted = track(rect.subtract(cs));
+    
+    // Break the inverted shape into its disconnected islands
+    const islands = [...inverted.decompose()];
+    
+    if (islands.length <= 1) {
+      return cs; // No holes found
+    }
+    
+    // The outer space is the island with the largest area (~1,000,000)
+    let maxArea = -1;
+    let outerSpace = islands[0];
+    for (let i = 0; i < islands.length; i++) {
+      const area = islands[i].area();
+      if (area > maxArea) {
+        maxArea = area;
+        outerSpace = islands[i];
+      }
+    }
+    
+    // Subtract the outer space from the giant rectangle to recover the shape,
+    // but now with all internal holes filled!
+    return track(rect.subtract(outerSpace));
+  };
+
   const filledOutline = (): Section => {
     const validRings = scaleRings(outline).filter((r) => r.length >= 3);
     if (validRings.length === 0) {
@@ -126,7 +159,13 @@ export function buildClicker(
     const h = Math.max(imgH + 2 * border, minCap);
     plate = roundedRect(w, h, Math.min(w, h) * 0.22);
   } else {
-    plate = track(filledOutline().offset(border, 'Round', 2.0, 48));
+    const rawPlate = track(filledOutline().offset(border, 'Round', 2.0, 48));
+    const solidPlate = removeHoles(rawPlate);
+    // Apply morphological closing (+offset followed by -offset) to smooth out 
+    // deep scalloped indentations between letters. This prevents the clicker
+    // from binding or sticking due to excessive friction in the sharp valleys.
+    const smoothingRadius = 4.0;
+    plate = track(solidPlate.offset(smoothingRadius, 'Round', 2.0, 48).offset(-smoothingRadius, 'Round', 2.0, 48));
   }
 
   const imageArea = shrink(plate, border, plate); // flat frame around the image

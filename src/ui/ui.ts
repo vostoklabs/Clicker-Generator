@@ -320,11 +320,11 @@ export function createUi(
       <div id="letterPanel" class="mode-panel" hidden>
         <div class="field">
           <label for="letterText">Custom Text</label>
-          <input id="letterText" type="text" value="A" maxlength="8" autocomplete="off" spellcheck="false" />
+          <textarea id="letterText" rows="2" maxlength="30" autocomplete="off" spellcheck="false" style="width: 100%; resize: vertical; min-height: 48px;">Custom\nText</textarea>
         </div>
         <div class="field">
-          <label for="fontSelect">Font</label>
-          <select id="fontSelect"></select>
+          <label>Font</label>
+          <div id="fontGrid" class="font-grid"></div>
           <label class="upload">
             + Import font
             <input id="fontUpload" type="file" accept=".ttf,.otf,.json,font/ttf,font/otf,application/json" />
@@ -536,15 +536,13 @@ export function createUi(
   rebuildGallery();
 
   // --- Text Panel Setup ---
-  const letterText = $<HTMLInputElement>('letterText');
-  const fontSelect = $<HTMLSelectElement>('fontSelect');
+  const letterText = $<HTMLTextAreaElement>('letterText');
+  const fontGrid = $('fontGrid');
   const fontUpload = $<HTMLInputElement>('fontUpload');
+  let selectedFontBtn: HTMLElement | null = null;
 
   letterText.addEventListener('input', () => {
     cb.onTextChange(letterText.value);
-  });
-  fontSelect.addEventListener('change', () => {
-    cb.onFontSelect(fontSelect.value);
   });
   fontUpload.addEventListener('change', () => {
     const f = fontUpload.files?.[0];
@@ -553,10 +551,19 @@ export function createUi(
   });
 
   function addFontOption(font: FontOption) {
-    const opt = document.createElement('option');
-    opt.value = font.id;
-    opt.textContent = font.name;
-    fontSelect.appendChild(opt);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'font-grid-btn';
+    btn.textContent = font.name;
+    btn.style.fontFamily = `"${font.id.replace('bundled-', '')}", "${font.name}", sans-serif`;
+    
+    btn.addEventListener('click', () => {
+      if (selectedFontBtn) selectedFontBtn.classList.remove('active');
+      btn.classList.add('active');
+      selectedFontBtn = btn;
+      cb.onFontSelect(font.id);
+    });
+    fontGrid.appendChild(btn);
   }
 
   FONT_OPTIONS.forEach(addFontOption);
@@ -1008,5 +1015,16 @@ export function createUi(
     }
   }
 
-  return { update, hexRgb, showColorPopoverAt, addUploadedSvg, addFontOption: (font: FontOption) => { addFontOption(font); fontSelect.value = font.id; } };
+  return { 
+    update, 
+    hexRgb, 
+    showColorPopoverAt, 
+    addUploadedSvg, 
+    addFontOption: (font: FontOption) => { 
+      addFontOption(font); 
+      // Click the newly added font to select it
+      const lastBtn = fontGrid.lastElementChild as HTMLElement;
+      if (lastBtn) lastBtn.click();
+    } 
+  };
 }

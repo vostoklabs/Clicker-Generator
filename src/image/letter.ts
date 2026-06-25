@@ -3,15 +3,6 @@ import { FontLoader, Font } from 'three/examples/jsm/loaders/FontLoader.js';
 import { TTFLoader } from 'three/examples/jsm/loaders/TTFLoader.js';
 import helvetikerRegular from 'three/examples/fonts/helvetiker_regular.typeface.json';
 import helvetikerBold from 'three/examples/fonts/helvetiker_bold.typeface.json';
-import optimerBold from 'three/examples/fonts/optimer_bold.typeface.json';
-import optimerRegular from 'three/examples/fonts/optimer_regular.typeface.json';
-import gentilisRegular from 'three/examples/fonts/gentilis_regular.typeface.json';
-import gentilisBold from 'three/examples/fonts/gentilis_bold.typeface.json';
-import droidSansRegular from 'three/examples/fonts/droid/droid_sans_regular.typeface.json';
-import droidSansBold from 'three/examples/fonts/droid/droid_sans_bold.typeface.json';
-import droidSansMonoRegular from 'three/examples/fonts/droid/droid_sans_mono_regular.typeface.json';
-import droidSerifRegular from 'three/examples/fonts/droid/droid_serif_regular.typeface.json';
-import droidSerifBold from 'three/examples/fonts/droid/droid_serif_bold.typeface.json';
 import type { RegionSet, Ring, RGB } from '../types';
 
 const fontLoader = new FontLoader();
@@ -27,17 +18,8 @@ export interface FontOption {
 export const FONT_OPTIONS: FontOption[] = [];
 
 const BUILT_IN_FONTS: [string, string, any][] = [
-  ['helvetiker-regular', 'Helvetiker', helvetikerRegular],
-  ['helvetiker-bold', 'Helvetiker Bold', helvetikerBold],
-  ['optimer-regular', 'Optimer', optimerRegular],
-  ['optimer-bold', 'Optimer Bold', optimerBold],
-  ['gentilis-regular', 'Gentilis', gentilisRegular],
-  ['gentilis-bold', 'Gentilis Bold', gentilisBold],
-  ['droid-sans-regular', 'Droid Sans', droidSansRegular],
-  ['droid-sans-bold', 'Droid Sans Bold', droidSansBold],
-  ['droid-sans-mono-regular', 'Droid Sans Mono', droidSansMonoRegular],
-  ['droid-serif-regular', 'Droid Serif', droidSerifRegular],
-  ['droid-serif-bold', 'Droid Serif Bold', droidSerifBold],
+  ['helvetiker-regular', 'Standard', helvetikerRegular],
+  ['helvetiker-bold', 'Standard Bold', helvetikerBold],
 ];
 
 for (const [id, name, data] of BUILT_IN_FONTS) {
@@ -63,6 +45,16 @@ const BUNDLED_TTF = [
   ['arvo', 'Arvo'],
   ['lobster', 'Lobster'],
   ['pacifico', 'Pacifico'],
+  ['bangers', 'Bangers'],
+  ['creepster', 'Creepster'],
+  ['permanent-marker', 'Permanent Marker'],
+  ['sigmar-one', 'Sigmar One'],
+  ['luckiest-guy', 'Luckiest Guy'],
+  ['bungee-shade', 'Bungee Shade'],
+  ['dancing-script', 'Dancing Script'],
+  ['amatic-sc', 'Amatic SC'],
+  ['playfair-display', 'Playfair Display'],
+  ['kalam', 'Kalam']
 ];
 
 let bundledLoaded = false;
@@ -70,6 +62,18 @@ export async function loadBundledFonts(onLoaded?: (option: FontOption) => void) 
   if (bundledLoaded) return;
   bundledLoaded = true;
   const baseUrl = import.meta.env.BASE_URL || '/';
+
+  // Inject @font-face rules so we can preview the fonts in the UI
+  const fontFaceStyles = BUNDLED_TTF.map(([slug]) => `
+    @font-face {
+      font-family: '${slug}';
+      src: url('${baseUrl}fonts/${slug}.ttf') format('truetype');
+    }
+  `).join('\n');
+  const styleEl = document.createElement('style');
+  styleEl.textContent = fontFaceStyles;
+  document.head.appendChild(styleEl);
+
   for (const [slug, name] of BUNDLED_TTF) {
     try {
       const buf = await fetch(`${baseUrl}fonts/${slug}.ttf`).then((r) => {
@@ -121,38 +125,67 @@ export async function importFontFile(file: File): Promise<FontOption> {
   return option;
 }
 
-export function parseLetter(text: string, fontId: string, maxLen = 4): RegionSet {
-  const value = Array.from((text || '').trim()).slice(0, maxLen).join('');
-  if (!value) throw new Error('Type a letter first.');
+export function parseLetter(text: string, fontId: string, maxLen = 30): RegionSet {
+  if (!text.trim()) throw new Error('Type a letter first.');
 
   const option = FONT_OPTIONS.find((font) => font.id === fontId) || FONT_OPTIONS[0];
-  const shapes = option.font.generateShapes(value, 100);
   const contours: Ring[] = [];
   const box = new THREE.Box2(
     new THREE.Vector2(Infinity, Infinity),
     new THREE.Vector2(-Infinity, -Infinity)
   );
 
-  for (const shape of shapes) {
-    const extracted = shape.extractPoints(16);
-    if (extracted.shape.length >= 3) {
-      const ring: Ring = [];
-      for (const p of extracted.shape) {
-        box.expandByPoint(p);
-        ring.push([p.x, p.y]);
+  const lines = text.split('\n');
+  let currentY = 0;
+
+  for (const rawLine of lines) {
+    const value = Array.from((rawLine || '').trim()).slice(0, maxLen).join('');
+    if (!value) continue;
+
+    const shapes = option.font.generateShapes(value, 100);
+    const lineBox = new THREE.Box2(
+      new THREE.Vector2(Infinity, Infinity),
+      new THREE.Vector2(-Infinity, -Infinity)
+    );
+    const lineContours: Ring[] = [];
+
+    for (const shape of shapes) {
+      const extracted = shape.extractPoints(16);
+      if (extracted.shape.length >= 3) {
+        const ring: Ring = [];
+        for (const p of extracted.shape) {
+          lineBox.expandByPoint(p);
+          ring.push([p.x, p.y]);
+        }
+        lineContours.push(ring);
+      }
+      for (const hole of extracted.holes) {
+        if (hole.length >= 3) {
+          const ring: Ring = [];
+          for (const p of hole) {
+            lineBox.expandByPoint(p);
+            ring.push([p.x, p.y]);
+          }
+          lineContours.push(ring);
+        }
+      }
+    }
+
+    if (lineContours.length === 0) continue;
+
+    const lineWidth = lineBox.max.x - lineBox.min.x;
+    const offsetX = -(lineBox.min.x + lineWidth / 2);
+
+    for (const ring of lineContours) {
+      for (const pt of ring) {
+        pt[0] += offsetX;
+        pt[1] += currentY;
+        box.expandByPoint(new THREE.Vector2(pt[0], pt[1]));
       }
       contours.push(ring);
     }
-    for (const hole of extracted.holes) {
-      if (hole.length >= 3) {
-        const ring: Ring = [];
-        for (const p of hole) {
-          box.expandByPoint(p);
-          ring.push([p.x, p.y]);
-        }
-        contours.push(ring);
-      }
-    }
+
+    currentY -= 130; // Move down for the next line
   }
 
   if (!contours.length) throw new Error('No drawable outlines found in this font.');
