@@ -151,15 +151,32 @@ export function parseSvg(svgText: string): RegionSet {
       -(y - cy) / maxSide // flip Y to match image tracer (Y-up)
     ]);
 
-  const totalPoints = allRings.reduce((sum, r) => sum + r.length, 0);
+  // Coverage drives carve priority in buildClicker (smallest-AREA colour is placed
+  // first so fine detail wins over big fills). It MUST be an area fraction to match
+  // the image pipeline (types.ts: "fraction of foreground pixels"). Measuring it by
+  // point count instead let a low-poly background rectangle — huge area but only ~4
+  // points — rank as the "smallest" colour, get placed first, and claim the whole
+  // cap, subtracting every real colour to nothing. The design vanished and the SVG
+  // came out blank/one-colour. Shoelace area (signed: outer +, holes −) fixes it.
+  const ringArea = (r: Ring): number => {
+    let a = 0;
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      a += r[j][0] * r[i][1] - r[i][0] * r[j][1];
+    }
+    return a / 2;
+  };
+  const regionArea = (rings: Ring[]): number =>
+    Math.abs(rings.reduce((sum, r) => sum + ringArea(r), 0));
+  const totalArea =
+    Array.from(groups.values()).reduce((sum, g) => sum + regionArea(g.rings), 0) || 1;
 
   const regions = Array.from(groups.values()).map(g => {
     const normRings = g.rings.map(normalizeRing);
-    const ringPoints = g.rings.reduce((sum, r) => sum + r.length, 0);
+    const cov = regionArea(g.rings) / totalArea;
     return {
       quantRgb: g.rgb,
-      components: [{ rings: normRings, coverage: ringPoints / totalPoints }],
-      coverage: ringPoints / totalPoints
+      components: [{ rings: normRings, coverage: cov }],
+      coverage: cov
     };
   });
 

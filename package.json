@@ -20,6 +20,7 @@
   "devDependencies": {
     "@types/d3-contour": "^3.0.6",
     "@types/three": "^0.171.0",
+    "@xmldom/xmldom": "^0.9.10",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }
