@@ -532,12 +532,15 @@ export function buildClicker(
     const th = Math.max(2.5, Math.min(4.0, (bodyTopZ - bodyBottomZ) * 0.35));
     const zb = bodyBottomZ;
 
-    // Create a circular loop and a bridge extending back through the body to fill any valley.
-    // The bridge is unioned with the body block, and then well and socket are subtracted
-    // afterwards to ensure the interior remains perfectly hollow.
+    // Create a circular loop and a short bridge into the +Y edge. Keep the bridge
+    // local to the loop: spanning it to the opposite body bound can leave an
+    // unwanted strip after the well is subtracted.
     const loopCircle = track(CrossSection.circle(loopR, 64).translate([0, cy]));
-    const bridgeHeight = cy - bb.min[1];
-    const bridge = track(CrossSection.square([loopR * 2, bridgeHeight], true).translate([0, cy - bridgeHeight / 2]));
+    const bodyDepth = Math.max(0, bb.max[1] - bb.min[1]);
+    const bridgeDepth = Math.min(bodyDepth, loopR * 1.1);
+    const bridgeBottomY = bb.max[1] - bridgeDepth;
+    const bridgeHeight = cy - bridgeBottomY;
+    const bridge = track(CrossSection.square([loopR * 2, bridgeHeight], true).translate([0, bridgeBottomY + bridgeHeight / 2]));
     const loopFootprint = track(loopCircle.add(bridge));
 
     const loop = extrudeAt(loopFootprint, th, zb);
